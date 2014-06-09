@@ -33,6 +33,11 @@ extern char *curly;
 # include <netdb.h>
 #endif
 
+#ifdef USE_USBUTILS
+#include <semaphore.h>
+#endif
+
+
 #ifdef __APPLE_CC__
 #include <OpenCL/opencl.h>
 #else
@@ -123,6 +128,15 @@ static inline int fsync (int fd)
 #ifdef HAVE_ADL
  #include "ADL_SDK/adl_sdk.h"
 #endif
+
+#ifdef USE_USBUTILS
+  #include <libusb.h>
+#endif
+
+#ifdef USE_USBUTILS
+  #include "usbutils.h"
+#endif
+
 
 #if (!defined(WIN32) && ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))) \
     || (defined(WIN32) && ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7)))
@@ -226,8 +240,12 @@ static inline int fsync (int fd)
 /* Adding a device here will update all macros in the code that use
  * the *_PARSE_COMMANDS macros for each listed driver.
  */
+#define ASIC_PARSE_COMMANDS(DRIVER_ADD_COMMAND) \
+	DRIVER_ADD_COMMAND(gridseed)
+
 #define DRIVER_PARSE_COMMANDS(DRIVER_ADD_COMMAND) \
-	DRIVER_ADD_COMMAND(opencl)
+	DRIVER_ADD_COMMAND(opencl) \
+	ASIC_PARSE_COMMANDS(DRIVER_ADD_COMMAND)
 
 #define DRIVER_ENUM(X) DRIVER_##X,
 #define DRIVER_PROTOTYPE(X) struct device_drv X##_drv;
@@ -446,6 +464,13 @@ struct cgpu_info {
 	char *device_path;
 	void *device_data;
 
+#ifdef USE_USBUTILS
+	struct cg_usb_device *usbdev;
+#endif
+#ifdef USE_USBUTILS
+	struct cg_usb_info usbinfo;
+#endif	
+	
 	enum dev_enable deven;
 	int accepted;
 	int rejected;
@@ -978,7 +1003,20 @@ extern bool opt_delaynet;
 extern time_t last_getwork;
 extern bool opt_disable_client_reconnect;
 extern bool opt_restart;
+extern bool opt_nogpu;
+extern bool opt_noasic;
 extern bool opt_worktime;
+#ifdef USE_GRIDSEED
+extern char *opt_gridseed_options;
+extern char *opt_gridseed_freq;
+extern char *opt_gridseed_chips;
+#endif
+#ifdef USE_USBUTILS
+extern char *opt_usb_select;
+extern int opt_usbdump;
+extern bool opt_usb_list_all;
+extern cgsem_t usb_resource_sem;
+#endif
 extern int swork_id;
 extern int opt_tcp_keepalive;
 extern bool opt_incognito;
@@ -1014,6 +1052,12 @@ extern bool fulltest(const unsigned char *hash, const unsigned char *target);
 extern int opt_queue;
 extern int opt_scantime;
 extern int opt_expiry;
+
+#ifdef USE_USBUTILS
+extern pthread_mutex_t cgusb_lock;
+extern pthread_mutex_t cgusbres_lock;
+extern cglock_t cgusb_fd_lock;
+#endif
 
 extern algorithm_t *opt_algorithm;
 
@@ -1071,6 +1115,8 @@ extern bool add_pool_details(struct pool *pool, bool live, char *url, char *user
 #define MAX_RAWINTENSITY 2147483647
 #define MAX_RAWINTENSITY_STR "2147483647"
 
+extern bool hotplug_mode;
+extern int hotplug_time;
 extern struct list_head scan_devices;
 extern int nDevs;
 extern int hw_errors;

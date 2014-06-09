@@ -3,8 +3,9 @@
 m4_define([v_maj], [4])
 m4_define([v_min], [2])
 m4_define([v_mic], [1])
+m4_define([v_rev], [gsd_1.4])
 ##--##--##--##--##--##--##--##--##--##--##--##--##--##--##--##--##
-m4_define([v_ver], [v_maj.v_min.v_mic])
+m4_ifdef([v_rev], [m4_define([v_ver], [v_maj.v_min.v_mic-v_rev])], [m4_define([v_ver], [v_maj.v_min.v_mic])])
 m4_define([lt_rev], m4_eval(v_maj + v_min))
 m4_define([lt_cur], v_mic)
 m4_define([lt_age], v_min)
@@ -30,6 +31,7 @@ m4_ifdef([v_rel], , [m4_define([v_rel], [])])
 AC_DEFINE_UNQUOTED(SGMINER_MAJOR_VERSION, [v_maj], [Major version])
 AC_DEFINE_UNQUOTED(SGMINER_MINOR_VERSION, [v_min], [Minor version])
 AC_DEFINE_UNQUOTED(SGMINER_MINOR_SUBVERSION, [v_mic], [Micro version])
+AC_DEFINE_UNQUOTED(SGMINER_REVISON, [v_rev], [Revison])
 version_info="lt_rev:lt_cur:lt_age"
 release_info="v_rel"
 AC_SUBST(version_info)
@@ -217,6 +219,19 @@ AC_ARG_ENABLE([git-version],
 		[Disable use of git version in version string even if available]),
 		[wantgitver=$enableval], [wantgitver=yes])
 
+gridseed="no"
+
+AC_ARG_ENABLE([gridseed],
+	[AC_HELP_STRING([--enable-gridseed],[Compile support for GridSeed (default disabled)])],
+	[gridseed=$enableval]
+	)
+if test "x$gridseed" = xyes; then
+	AC_DEFINE([USE_GRIDSEED], [1], [Defined to 1 if GridSeed support is wanted])
+fi
+AM_CONDITIONAL([HAS_GRIDSEED], [test x$gridseed = xyes])
+AM_CONDITIONAL([WANT_USBUTILS], [test x$gridseed = xyes])
+		
+		
 curses="auto"
 
 AC_ARG_WITH([curses],
@@ -259,6 +274,46 @@ if test "x$have_sgminer_sdk" = "xtrue"; then
 	PKG_CONFIG="${PKG_CONFIG:-pkg-config} --define-variable=arch=$ARCH_DIR --define-variable=target=$target --define-variable=sgminersdkdir=$SGMINER_SDK"
 	PKG_CONFIG_PATH="$SGMINER_SDK/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 fi
+
+if test "x$gridseed" = xyes; then
+	dlibusb="no"
+	AC_DEFINE([USE_USBUTILS], [1], [Defined to 1 if usbutils support required])
+	AC_ARG_WITH([system-libusb],
+		[AC_HELP_STRING([--with-system-libusb],[Compile against dynamic system libusb (default use included static libusb)])],
+		[dlibusb=$withval]
+	)
+
+	if test "x$dlibusb" != xno; then
+		case $target in
+			*-*-freebsd*)
+				LIBUSB_LIBS="-lusb"
+				LIBUSB_CFLAGS=""
+				AC_DEFINE(HAVE_LIBUSB, 1, [Define if you have libusb-1.0])
+				;;
+			*)
+				PKG_CHECK_MODULES(LIBUSB, libusb-1.0, [AC_DEFINE(HAVE_LIBUSB, 1, [Define if you have libusb-1.0])], [AC_MSG_ERROR([Could not find usb library - please install libusb-1.0])])
+				;;
+		esac
+	else
+		AC_CONFIG_SUBDIRS([compat/libusb-1.0])
+		LIBUSB_LIBS="compat/libusb-1.0/libusb/.libs/libusb-1.0.a"
+		if test "x$have_linux" = "xtrue"; then
+			LIBUSB_LIBS+=" -ludev"
+		fi
+		if test "x$have_darwin" = "xtrue"; then
+			LIBUSB_LIBS+=" -lobjc"
+			LDFLAGS+=" -framework CoreFoundation -framework IOKit"
+		fi
+	fi
+else
+	LIBUSB_LIBS=""
+fi
+
+AM_CONDITIONAL([WANT_STATIC_LIBUSB], [test x$dlibusb = xno])
+
+AC_SUBST(LIBUSB_LIBS)
+AC_SUBST(LIBUSB_CFLAGS)
+
 
 AC_ARG_ENABLE([libcurl],
 	[AC_HELP_STRING([--disable-libcurl],[Disable building with libcurl for getwork and GBT support])],
@@ -415,11 +470,18 @@ else
 fi
 
 echo
+if test "x$gridseed" = xyes; then
+	echo "  GridSeed.ASICs.......: Enabled"
+else
+	echo "  GridSeed.ASICs.......: Disabled"
+fi
+
+echo
 echo "Compilation............: make (or gmake)"
 echo "  CPPFLAGS.............: $CPPFLAGS"
 echo "  CFLAGS...............: $CFLAGS"
 echo "  LDFLAGS..............: $LDFLAGS $PTHREAD_FLAGS"
-echo "  LDADD................: $DLOPEN_FLAGS $LIBCURL_LIBS $JANSSON_LIBS $PTHREAD_LIBS $OPENCL_LIBS $NCURSES_LIBS $PDCURSES_LIBS $WS2_LIBS $MATH_LIBS $RT_LIBS"
+echo "  LDADD................: $DLOPEN_FLAGS $LIBCURL_LIBS $JANSSON_LIBS $PTHREAD_LIBS $OPENCL_LIBS $NCURSES_LIBS $PDCURSES_LIBS $WS2_LIBS $MATH_LIBS $LIBUSB_LIBS $RT_LIBS"
 echo
 echo "Installation...........: make install (as root if needed, with 'su' or 'sudo')"
 echo "  prefix...............: $prefix"
