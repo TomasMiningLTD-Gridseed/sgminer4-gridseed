@@ -1,5 +1,6 @@
+/* -*- Mode: C; c-basic-offset:8 ; indent-tabs-mode:t -*- */
 /*
- * Linux usbfs backend for libusbx
+ * Linux usbfs backend for libusb
  * Copyright © 2007-2009 Daniel Drake <dsd@gentoo.org>
  * Copyright © 2001 Johannes Erdfelt <johannes@erdfelt.com>
  * Copyright © 2013 Nathan Hjelm <hjelmn@mac.com>
@@ -48,7 +49,7 @@
  * sysfs allows us to read the kernel's in-memory copies of device descriptors
  * and so forth, avoiding the need to open the device:
  *  - The binary "descriptors" file contains all config descriptors since
- *    2.6.26, commit 217a9081d8e69026186067711131b77f0ce219ed 
+ *    2.6.26, commit 217a9081d8e69026186067711131b77f0ce219ed
  *  - The binary "descriptors" file was added in 2.6.23, commit
  *    69d42a78f935d19384d1f6e4f94b65bb162b36df, but it only contains the
  *    active config descriptors
@@ -120,7 +121,9 @@ static int sysfs_has_descriptors = -1;
 /* how many times have we initted (and not exited) ? */
 static volatile int init_count = 0;
 
-/* Serialize hotplug start/stop, scan-devices, event-thread, and poll */
+/* Serialize hotplug start/stop */
+usbi_mutex_static_t linux_hotplug_startstop_lock = USBI_MUTEX_INITIALIZER;
+/* Serialize scan-devices, event-thread, and poll */
 usbi_mutex_static_t linux_hotplug_lock = USBI_MUTEX_INITIALIZER;
 
 static int linux_start_event_monitor(void);
@@ -194,10 +197,10 @@ static int _get_usbfs_fd(struct libusb_device *dev, mode_t mode, int silent)
 		return fd; /* Success */
 
 	if (!silent) {
-		usbi_err(ctx, "libusbx couldn't open USB device %s: %s",
+		usbi_err(ctx, "libusb couldn't open USB device %s: %s",
 			 path, strerror(errno));
 		if (errno == EACCES && mode == O_RDWR)
-			usbi_err(ctx, "libusbx requires write access to USB "
+			usbi_err(ctx, "libusb requires write access to USB "
 				      "device nodes.");
 	}
 
@@ -419,7 +422,7 @@ static int op_init(struct libusb_context *ctx)
 	if (sysfs_has_descriptors)
 		usbi_dbg("sysfs has complete descriptors");
 
-	usbi_mutex_static_lock(&linux_hotplug_lock);
+	usbi_mutex_static_lock(&linux_hotplug_startstop_lock);
 	r = LIBUSB_SUCCESS;
 	if (init_count == 0) {
 		/* start up hotplug event handler */
@@ -433,20 +436,20 @@ static int op_init(struct libusb_context *ctx)
 			linux_stop_event_monitor();
 	} else
 		usbi_err(ctx, "error starting hotplug event monitor");
-	usbi_mutex_static_unlock(&linux_hotplug_lock);
+	usbi_mutex_static_unlock(&linux_hotplug_startstop_lock);
 
 	return r;
 }
 
 static void op_exit(void)
 {
-	usbi_mutex_static_lock(&linux_hotplug_lock);
+	usbi_mutex_static_lock(&linux_hotplug_startstop_lock);
 	assert(init_count != 0);
 	if (!--init_count) {
 		/* tear down event handler */
 		(void)linux_stop_event_monitor();
 	}
-	usbi_mutex_static_unlock(&linux_hotplug_lock);
+	usbi_mutex_static_unlock(&linux_hotplug_startstop_lock);
 }
 
 static int linux_start_event_monitor(void)
@@ -469,11 +472,19 @@ static int linux_stop_event_monitor(void)
 
 static int linux_scan_devices(struct libusb_context *ctx)
 {
+	int ret;
+
+	usbi_mutex_static_lock(&linux_hotplug_lock);
+
 #if defined(USE_UDEV)
-	return linux_udev_scan_devices(ctx);
+	ret = linux_udev_scan_devices(ctx);
 #else
-	return linux_default_scan_devices(ctx);
+	ret = linux_default_scan_devices(ctx);
 #endif
+
+	usbi_mutex_static_unlock(&linux_hotplug_lock);
+
+	return ret;
 }
 
 static void op_hotplug_poll(void)
@@ -553,7 +564,7 @@ static int op_get_device_descriptor(struct libusb_device *dev,
 static int sysfs_get_active_config(struct libusb_device *dev, int *config)
 {
 	char *endptr;
-	char tmp[4] = {0, 0, 0, 0};
+	char tmp[5] = {0, 0, 0, 0, 0};
 	long num;
 	int fd;
 	ssize_t r;
@@ -565,7 +576,7 @@ static int sysfs_get_active_config(struct libusb_device *dev, int *config)
 	r = read(fd, tmp, sizeof(tmp));
 	close(fd);
 	if (r < 0) {
-		usbi_err(DEVICE_CTX(dev), 
+		usbi_err(DEVICE_CTX(dev),
 			"read bConfigurationValue failed ret=%d errno=%d", r, errno);
 		return LIBUSB_ERROR_IO;
 	} else if (r == 0) {
@@ -596,6 +607,8 @@ int linux_get_device_address (struct libusb_context *ctx, int detached,
 	uint8_t *busnum, uint8_t *devaddr,const char *dev_node,
 	const char *sys_name)
 {
+	int sysfs_attr;
+
 	usbi_dbg("getting address for device: %s detached: %d", sys_name, detached);
 	/* can't use sysfs to read the bus and device number if the
 	 * device has been detached */
@@ -616,17 +629,22 @@ int linux_get_device_address (struct libusb_context *ctx, int detached,
 
 	usbi_dbg("scan %s", sys_name);
 
-	*busnum = __read_sysfs_attr(ctx, sys_name, "busnum");
-	if (0 > *busnum)
-		return *busnum;
+	sysfs_attr = __read_sysfs_attr(ctx, sys_name, "busnum");
+	if (0 > sysfs_attr)
+		return sysfs_attr;
+	if (sysfs_attr > 255)
+		return LIBUSB_ERROR_INVALID_PARAM;
+	*busnum = (uint8_t) sysfs_attr;
 
-	*devaddr = __read_sysfs_attr(ctx, sys_name, "devnum");
-	if (0 > *devaddr)
-		return *devaddr;
+	sysfs_attr = __read_sysfs_attr(ctx, sys_name, "devnum");
+	if (0 > sysfs_attr)
+		return sysfs_attr;
+	if (sysfs_attr > 255)
+		return LIBUSB_ERROR_INVALID_PARAM;
+
+	*devaddr = (uint8_t) sysfs_attr;
 
 	usbi_dbg("bus=%d dev=%d", *busnum, *devaddr);
-	if (*busnum > 255 || *devaddr > 255)
-		return LIBUSB_ERROR_INVALID_PARAM;
 
 	return LIBUSB_SUCCESS;
 }
@@ -895,7 +913,7 @@ static int initialize_device(struct libusb_device *dev, uint8_t busnum,
 		}
 		priv->descriptors_len += r;
 	} while (priv->descriptors_len == descriptors_size);
-	
+
 	close(fd);
 
 	if (priv->descriptors_len < DEVICE_DESC_LENGTH) {
@@ -1030,9 +1048,11 @@ int linux_enumerate_device(struct libusb_context *ctx,
 	usbi_dbg("busnum %d devaddr %d session_id %ld", busnum, devaddr,
 		session_id);
 
-	if (usbi_get_device_by_session_id(ctx, session_id)) {
+	dev = usbi_get_device_by_session_id(ctx, session_id);
+	if (dev) {
 		/* device already exists in the context */
 		usbi_dbg("session_id %ld already exists", session_id);
+		libusb_unref_device(dev);
 		return LIBUSB_SUCCESS;
 	}
 
@@ -1072,7 +1092,7 @@ void linux_hotplug_enumerate(uint8_t busnum, uint8_t devaddr, const char *sys_na
 	usbi_mutex_static_unlock(&active_contexts_lock);
 }
 
-void linux_hotplug_disconnected(uint8_t busnum, uint8_t devaddr, const char *sys_name)
+void linux_device_disconnected(uint8_t busnum, uint8_t devaddr, const char *sys_name)
 {
 	struct libusb_context *ctx;
 	struct libusb_device *dev;
@@ -1083,6 +1103,7 @@ void linux_hotplug_disconnected(uint8_t busnum, uint8_t devaddr, const char *sys
 		dev = usbi_get_device_by_session_id (ctx, session_id);
 		if (NULL != dev) {
 			usbi_disconnect_device (dev);
+			libusb_unref_device(dev);
 		} else {
 			usbi_dbg("device not found for session %x", session_id);
 		}
@@ -1247,8 +1268,20 @@ static int op_open(struct libusb_device_handle *handle)
 	int r;
 
 	hpriv->fd = _get_usbfs_fd(handle->dev, O_RDWR, 0);
-	if (hpriv->fd < 0)
+	if (hpriv->fd < 0) {
+		if (hpriv->fd == LIBUSB_ERROR_NO_DEVICE) {
+			/* device will still be marked as attached if hotplug monitor thread
+			 * hasn't processed remove event yet */
+			usbi_mutex_static_lock(&linux_hotplug_lock);
+			if (handle->dev->attached) {
+				usbi_dbg("open failed with no device, but device still attached");
+				linux_device_disconnected(handle->dev->bus_number,
+						handle->dev->device_address, NULL);
+			}
+			usbi_mutex_static_unlock(&linux_hotplug_lock);
+		}
 		return hpriv->fd;
+	}
 
 	r = ioctl(hpriv->fd, IOCTL_USBFS_GET_CAPABILITIES, &hpriv->caps);
 	if (r < 0) {
@@ -1775,7 +1808,7 @@ static int submit_bulk_transfer(struct usbi_transfer *itransfer,
 					"submiturb failed error %d errno=%d", r, errno);
 				r = LIBUSB_ERROR_IO;
 			}
-	
+
 			/* if the first URB submission fails, we can simply free up and
 			 * return failure immediately. */
 			if (i == 0) {
@@ -1790,7 +1823,7 @@ static int submit_bulk_transfer(struct usbi_transfer *itransfer,
 			 * complications:
 			 *  - discarding is asynchronous - discarded urbs will be reaped
 			 *    later. the user must not have freed the transfer when the
-			 *    discarded URBs are reaped, otherwise libusbx will be using
+			 *    discarded URBs are reaped, otherwise libusb will be using
 			 *    freed memory.
 			 *  - the earlier URBs may have completed successfully and we do
 			 *    not want to throw away any data.
@@ -1952,7 +1985,7 @@ static int submit_iso_transfer(struct usbi_transfer *itransfer)
 			 * complications:
 			 *  - discarding is asynchronous - discarded urbs will be reaped
 			 *    later. the user must not have freed the transfer when the
-			 *    discarded URBs are reaped, otherwise libusbx will be using
+			 *    discarded URBs are reaped, otherwise libusb will be using
 			 *    freed memory.
 			 *  - the earlier URBs may have completed successfully and we do
 			 *    not want to throw away any data.
@@ -2127,7 +2160,7 @@ static int handle_bulk_completion(struct usbi_transfer *itransfer,
 		 *
 		 * When this happens, our objectives are not to lose any "surplus" data,
 		 * and also to stick it at the end of the previously-received data
-		 * (closing any holes), so that libusbx reports the total amount of
+		 * (closing any holes), so that libusb reports the total amount of
 		 * transferred data and presents it in a contiguous chunk.
 		 */
 		if (urb->actual_length > 0) {
@@ -2482,6 +2515,13 @@ static int op_handle_events(struct libusb_context *ctx,
 		if (pollfd->revents & POLLERR) {
 			usbi_remove_pollfd(HANDLE_CTX(handle), hpriv->fd);
 			usbi_handle_disconnect(handle);
+			/* device will still be marked as attached if hotplug monitor thread
+			 * hasn't processed remove event yet */
+			usbi_mutex_static_lock(&linux_hotplug_lock);
+			if (handle->dev->attached)
+				linux_device_disconnected(handle->dev->bus_number,
+						handle->dev->device_address, NULL);
+			usbi_mutex_static_unlock(&linux_hotplug_lock);
 			continue;
 		}
 

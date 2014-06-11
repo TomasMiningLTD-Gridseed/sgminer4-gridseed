@@ -1,6 +1,6 @@
 /* -*- Mode: C; indent-tabs-mode:t ; c-basic-offset:8 -*- */
 /*
- * USB descriptor handling functions for libusbx
+ * USB descriptor handling functions for libusb
  * Copyright © 2007 Daniel Drake <dsd@gentoo.org>
  * Copyright © 2001 Johannes Erdfelt <johannes@erdfelt.com>
  *
@@ -541,7 +541,7 @@ int usbi_device_cache_descriptor(libusb_device *dev)
  *
  * This is a non-blocking function; the device descriptor is cached in memory.
  *
- * Note since libusbx-1.0.16, \ref LIBUSBX_API_VERSION >= 0x01000102, this
+ * Note since libusb-1.0.16, \ref LIBUSB_API_VERSION >= 0x01000102, this
  * function always succeeds.
  *
  * \param dev the device
@@ -660,7 +660,7 @@ int API_EXPORTED libusb_get_config_descriptor(libusb_device *dev,
 /* iterate through all configurations, returning the index of the configuration
  * matching a specific bConfigurationValue in the idx output parameter, or -1
  * if the config was not found.
- * returns 0 or a LIBUSB_ERROR code
+ * returns 0 on success or a LIBUSB_ERROR code
  */
 int usbi_get_config_index_by_value(struct libusb_device *dev,
 	uint8_t bConfigurationValue, int *idx)
@@ -673,8 +673,10 @@ int usbi_get_config_index_by_value(struct libusb_device *dev,
 		int host_endian;
 		int r = usbi_backend->get_config_descriptor(dev, i, tmp, sizeof(tmp),
 			&host_endian);
-		if (r < 0)
+		if (r < 0) {
+			*idx = -1;
 			return r;
+		}
 		if (tmp[5] == bConfigurationValue) {
 			*idx = i;
 			return 0;

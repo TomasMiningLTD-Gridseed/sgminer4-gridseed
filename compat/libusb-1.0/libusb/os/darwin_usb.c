@@ -1,6 +1,6 @@
 /* -*- Mode: C; indent-tabs-mode:nil -*- */
 /*
- * darwin backend for libusbx 1.0
+ * darwin backend for libusb 1.0
  * Copyright © 2008-2013 Nathan Hjelm <hjelmn@users.sourceforge.net>
  *
  * This library is free software; you can redistribute it and/or
@@ -71,6 +71,7 @@ static int process_new_device (struct libusb_context *ctx, io_service_t service)
 
 #if defined(ENABLE_LOGGING)
 static const char *darwin_error_str (int result) {
+  static char string_buffer[50];
   switch (result) {
   case kIOReturnSuccess:
     return "no error";
@@ -103,7 +104,8 @@ static const char *darwin_error_str (int result) {
   case kIOUSBHighSpeedSplitError:
     return "high speed split error";
   default:
-    return "unknown error";
+    snprintf(string_buffer, sizeof(string_buffer), "unknown error (0x%x)", result);
+    return string_buffer;
   }
 }
 #endif
@@ -210,6 +212,7 @@ static int usb_setup_device_iterator (io_iterator_t *deviceIterator, UInt32 loca
   return IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, deviceIterator);
 }
 
+/* Returns 1 on success, 0 on failure. */
 static int get_ioregistry_value_number (io_service_t service, CFStringRef property, CFNumberType type, void *p) {
   CFTypeRef cfNumber = IORegistryEntryCreateCFProperty (service, property, kCFAllocatorDefault, 0);
   int ret = 0;
@@ -287,11 +290,12 @@ static void darwin_devices_detached (void *ptr, io_iterator_t rem_devices) {
     list_for_each_entry(ctx, &active_contexts_list, list, struct libusb_context) {
       usbi_dbg ("notifying context %p of device disconnect", ctx);
 
-      dev = usbi_get_device_by_session_id(ctx, session);
+      dev = usbi_get_device_by_session_id(ctx, (unsigned long) session);
       if (dev) {
         /* signal the core that this device has been disconnected. the core will tear down this device
            when the reference count reaches 0 */
         usbi_disconnect_device(dev);
+        libusb_unref_device(dev);
       }
     }
 
@@ -701,7 +705,7 @@ static int darwin_cache_device_descriptor (struct libusb_context *ctx, struct da
     else
       usbi_warn (ctx, "could not retrieve device descriptor %.4x:%.4x: %s (%x). skipping device",
                  idVendor, idProduct, darwin_error_str (ret), ret);
-    return -1;
+    return darwin_to_libusb (ret);
   }
 
   /* catch buggy hubs (which appear to be virtual). Apple's own USB prober has problems with these devices. */
@@ -709,7 +713,7 @@ static int darwin_cache_device_descriptor (struct libusb_context *ctx, struct da
     /* not a valid device */
     usbi_warn (ctx, "idProduct from iokit (%04x) does not match idProduct in descriptor (%04x). skipping device",
                idProduct, libusb_le16_to_cpu (dev->dev_descriptor.idProduct));
-    return -1;
+    return LIBUSB_ERROR_NO_DEVICE;
   }
 
   usbi_dbg ("cached device descriptor:");
@@ -729,26 +733,24 @@ static int darwin_cache_device_descriptor (struct libusb_context *ctx, struct da
 
   dev->can_enumerate = 1;
 
-  return 0;
+  return LIBUSB_SUCCESS;
 }
 
 static int darwin_get_cached_device(struct libusb_context *ctx, io_service_t service,
                                     struct darwin_cached_device **cached_out) {
   struct darwin_cached_device *new_device;
-  UInt64 sessionID, parent_sessionID;
+  UInt64 sessionID = 0, parent_sessionID = 0;
   int ret = LIBUSB_SUCCESS;
   usb_device_t **device;
   io_service_t parent;
   kern_return_t result;
   UInt8 port = 0;
 
-  *cached_out = NULL;
-
   /* get some info from the io registry */
   (void) get_ioregistry_value_number (service, CFSTR("sessionID"), kCFNumberSInt64Type, &sessionID);
   (void) get_ioregistry_value_number (service, CFSTR("PortNum"), kCFNumberSInt8Type, &port);
 
-  usbi_dbg("finding cached device for sessionID 0x\n" PRIx64, sessionID);
+  usbi_dbg("finding cached device for sessionID 0x%" PRIx64, sessionID);
 
   result = IORegistryEntryGetParentEntry (service, kIOUSBPlane, &parent);
 
@@ -759,8 +761,10 @@ static int darwin_get_cached_device(struct libusb_context *ctx, io_service_t ser
 
   usbi_mutex_lock(&darwin_cached_devices_lock);
   do {
+    *cached_out = NULL;
+
     list_for_each_entry(new_device, &darwin_cached_devices, list, struct darwin_cached_device) {
-      usbi_dbg("matching sessionID 0x%x against cached device with sessionID 0x%x", sessionID, new_device->session);
+      usbi_dbg("matching sessionID 0x%" PRIx64 " against cached device with sessionID 0x%" PRIx64, sessionID, new_device->session);
       if (new_device->session == sessionID) {
         usbi_dbg("using cached device for device");
         *cached_out = new_device;
@@ -771,19 +775,17 @@ static int darwin_get_cached_device(struct libusb_context *ctx, io_service_t ser
     if (*cached_out)
       break;
 
-    usbi_dbg("caching new device with sessionID 0x%x\n", sessionID);
-
-    new_device = calloc (1, sizeof (*new_device));
-    if (!new_device) {
-      ret = LIBUSB_ERROR_NO_MEM;
-      break;
-    }
+    usbi_dbg("caching new device with sessionID 0x%" PRIx64, sessionID);
 
     device = darwin_device_from_service (service);
     if (!device) {
       ret = LIBUSB_ERROR_NO_DEVICE;
-      free (new_device);
-      new_device = NULL;
+      break;
+    }
+
+    new_device = calloc (1, sizeof (*new_device));
+    if (!new_device) {
+      ret = LIBUSB_ERROR_NO_MEM;
       break;
     }
 
@@ -833,7 +835,7 @@ static int process_new_device (struct libusb_context *ctx, io_service_t service)
   do {
     ret = darwin_get_cached_device (ctx, service, &cached_device);
 
-    if (ret < 0 || (cached_device && !cached_device->can_enumerate)) {
+    if (ret < 0 || !cached_device->can_enumerate) {
       return ret;
     }
 
@@ -843,10 +845,10 @@ static int process_new_device (struct libusb_context *ctx, io_service_t service)
     if (ret)
       break;
 
-    usbi_dbg ("allocating new device in context %p for with session 0x%08x",
+    usbi_dbg ("allocating new device in context %p for with session 0x%" PRIx64,
               ctx, cached_device->session);
 
-    dev = usbi_alloc_device(ctx, cached_device->session);
+    dev = usbi_alloc_device(ctx, (unsigned long) cached_device->session);
     if (!dev) {
       return LIBUSB_ERROR_NO_MEM;
     }
@@ -857,18 +859,13 @@ static int process_new_device (struct libusb_context *ctx, io_service_t service)
     darwin_ref_cached_device (priv->dev);
 
     if (cached_device->parent_session > 0) {
-      dev->parent_dev = usbi_get_device_by_session_id (ctx, cached_device->parent_session);
+      dev->parent_dev = usbi_get_device_by_session_id (ctx, (unsigned long) cached_device->parent_session);
     } else {
       dev->parent_dev = NULL;
     }
     dev->port_number    = cached_device->port;
     dev->bus_number     = cached_device->location >> 24;
     dev->device_address = cached_device->address;
-
-    /* need to add a reference to the parent device */
-    if (dev->parent_dev) {
-      libusb_ref_device(dev->parent_dev);
-    }
 
     (*(priv->dev->device))->GetDeviceSpeed (priv->dev->device, &devSpeed);
 
@@ -1434,7 +1431,7 @@ static int submit_bulk_transfer(struct usbi_transfer *itransfer) {
 
   IOReturn               ret;
   uint8_t                transferType;
-  /* None of the values below are used in libusbx for bulk transfers */
+  /* None of the values below are used in libusb for bulk transfers */
   uint8_t                direction, number, interval, pipeRef, iface;
   uint16_t               maxPacketSize;
 
@@ -1448,8 +1445,14 @@ static int submit_bulk_transfer(struct usbi_transfer *itransfer) {
 
   cInterface = &priv->interfaces[iface];
 
-  (*(cInterface->interface))->GetPipeProperties (cInterface->interface, pipeRef, &direction, &number,
-                                                 &transferType, &maxPacketSize, &interval);
+  ret = (*(cInterface->interface))->GetPipeProperties (cInterface->interface, pipeRef, &direction, &number,
+                                                       &transferType, &maxPacketSize, &interval);
+
+  if (ret) {
+    usbi_err (TRANSFER_CTX (transfer), "bulk transfer failed (dir = %s): %s (code = 0x%08x)", IS_XFERIN(transfer) ? "In" : "Out",
+              darwin_error_str(ret), ret);
+    return darwin_to_libusb (ret);
+  }
 
   if (0 != (transfer->length % maxPacketSize)) {
     /* do not need a zero packet */
@@ -1512,7 +1515,7 @@ static int submit_iso_transfer(struct usbi_transfer *itransfer) {
       return LIBUSB_ERROR_NO_MEM;
   }
 
-  /* copy the frame list from the libusbx descriptor (the structures differ only is member order) */
+  /* copy the frame list from the libusb descriptor (the structures differ only is member order) */
   for (i = 0 ; i < transfer->num_iso_packets ; i++)
     tpriv->isoc_framelist[i].frReqCount = transfer->iso_packet_desc[i].length;
 
@@ -1593,7 +1596,7 @@ static int submit_control_transfer(struct usbi_transfer *itransfer) {
   tpriv->req.wValue            = OSSwapLittleToHostInt16 (setup->wValue);
   tpriv->req.wIndex            = OSSwapLittleToHostInt16 (setup->wIndex);
   tpriv->req.wLength           = OSSwapLittleToHostInt16 (setup->wLength);
-  /* data is stored after the libusbx control block */
+  /* data is stored after the libusb control block */
   tpriv->req.pData             = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
   tpriv->req.completionTimeout = transfer->timeout;
   tpriv->req.noDataTimeout     = transfer->timeout;

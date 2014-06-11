@@ -1,16 +1,19 @@
 all: libusb-1.0.la libusb-1.0.dll
 
+AUTOMAKE_OPTIONS = subdir-objects
+
 lib_LTLIBRARIES = libusb-1.0.la
 
 POSIX_POLL_SRC = os/poll_posix.c
 LINUX_USBFS_SRC = os/linux_usbfs.c
 DARWIN_USB_SRC = os/darwin_usb.c
 OPENBSD_USB_SRC = os/openbsd_usb.c
+NETBSD_USB_SRC = os/netbsd_usb.c
 WINDOWS_USB_SRC = os/poll_windows.c os/windows_usb.c libusb-1.0.rc libusb-1.0.def
 WINCE_USB_SRC = os/wince_usb.c os/wince_usb.h
 
 EXTRA_DIST = $(LINUX_USBFS_SRC) $(DARWIN_USB_SRC) $(OPENBSD_USB_SRC) \
-	$(WINDOWS_USB_SRC) $(WINCE_USB_SRC) \
+	$(NETBSD_USB_SRC) $(WINDOWS_USB_SRC) $(WINCE_USB_SRC) \
 	$(POSIX_POLL_SRC) \
 	os/threads_posix.c os/threads_windows.c \
 	os/linux_udev.c os/linux_netlink.c
@@ -36,6 +39,10 @@ if OS_OPENBSD
 OS_SRC = $(OPENBSD_USB_SRC) $(POSIX_POLL_SRC)
 endif
 
+if OS_NETBSD
+OS_SRC = $(NETBSD_USB_SRC) $(POSIX_POLL_SRC)
+endif
+
 if OS_WINDOWS
 OS_SRC = $(WINDOWS_USB_SRC)
 
@@ -45,7 +52,7 @@ OS_SRC = $(WINDOWS_USB_SRC)
 libusb-1.0.rc: version.h version_nano.h
 endif
 
-libusb-1.0.dll: libusb-1.0.def
+libusb-1.0.dll: libusb-1.0.def libusb-1.0.la
 if CREATE_IMPORT_LIB
 # Rebuild the import lib from the .def so that MS and MinGW DLLs can be interchanged
 	$(AM_V_GEN)$(DLLTOOL) $(DLLTOOLFLAGS) --kill-at --input-def $(srcdir)/libusb-1.0.def --dllname $@ --output-lib .libs/$@.a
