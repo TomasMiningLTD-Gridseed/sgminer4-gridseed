@@ -31,6 +31,8 @@ Documentation is available in directory `doc`. It is organised by topics:
 * `FAQ.md` for frequently asked questions;
 * `GPU` for semi-obsolete information on GPU configuration options and mining
   SHA256d-based coins;
+* `ASIC-Gridseed.md` for Gridseed Support Information (compilation and configuration
+ options);
 * `kernel.md` for OpenCL kernel-related information, including development
   procedure;
 * `MINING.md` for how to find the right balance in GPU configuration to mine
