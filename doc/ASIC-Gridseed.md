@@ -6,33 +6,38 @@
 
 Use: `--enable-gridseed` to compile with gridseed support
 
-Example: `./configure --enable-gridseed `
+Example: `./configure --enable-gridseed`
 
 ### Configuration
 
 GC3355-specific options can be specified via `--gridseed-options` or `gridseed-options` in the configuration file as a comma-separated list of sub-options:
-•baud - miner baud rate (default 115200)
-•freq - see below list of freq
-•pll_r, pll_f, pll_od - fine-grained frequency tuning; see below
-•chips - number of chips per device (default 5 or 40) maximum set is 256
-•per_chip_stats - print per-chip nonce generations and hardware failures
+
+* baud - miner baud rate (default 115200);
+* freq - see below list of freq;
+* pll_r, pll_f, pll_od - fine-grained frequency tuning; see below;
+* chips - number of chips per device (default 5 or 40) maximum set is 256;
+* per_chip_stats - print per-chip nonce generations and hardware failures;
 
 If pll_r/pll_f/pll_od are specified, freq is ignored, and calculated as follows:
-•Fin = 25
-•Fref = int(Fin / (pll_r + 1))
-•Fvco = int(Fref * (pll_f + 1))
-•Fout = int(Fvco / (1 << pll_od))
-•freq = Fout
+
+* Fin = 25
+* Fref = int(Fin / (pll_r + 1))
+* Fvco = int(Fref * (pll_f + 1))
+* Fout = int(Fvco / (1 << pll_od))
+* freq = Fout
 
 This version of cgminer turns off all BTC cores so that power usage is low. On a 5-chip USB miner, power usage is around 10 W.
 
 To the command line:
+
 You can also specified options via `--gridseed-freq` to specify only freq or `--gridseed-chips` to specify only chips number by panel.
 
 To the configuration file:
+
 You can also specified options via `gridseed-freq:` to specify only freq or `gridseed-chips:` to specify only chips number per device.
 
 ### frequency list
+
 700,  706,  713,  719,  725,  731,  738,  744,
 750,  756,  763,  769,  775,  781,  788,  794,
 800,  813,  825,  838,  850,  863,  875,  888,
@@ -44,6 +49,7 @@ You can also specified options via `gridseed-freq:` to specify only freq or `gri
 1400
 
 Optimal frequency is between 800 and 850.
+
 800 to normal mode, 838 or more to overclock mode.
 
 ### Example command line
