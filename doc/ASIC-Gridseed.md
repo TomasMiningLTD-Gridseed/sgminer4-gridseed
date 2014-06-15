@@ -36,7 +36,9 @@ To the configuration file:
 
 You can also specified options via `gridseed-freq:` to specify only freq or `gridseed-chips:` to specify only chips number per device.
 
-### frequency list
+### Frequency list
+
+* Frequency available:
 
 700,  706,  713,  719,  725,  731,  738,  744,
 750,  756,  763,  769,  775,  781,  788,  794,
