@@ -2065,7 +2065,9 @@ static void poolstatus(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __m
 			lp = (char *)NO;
 
 		root = api_add_int(root, "POOL", &i, false);
-		root = api_add_string(root, "Name", get_pool_name(pool), false);
+		mutex_lock(&pool->stratum_lock);
+		root = api_add_string(root, "Name", get_pool_name(pool), true);
+		mutex_unlock(&pool->stratum_lock);
 		root = api_add_escape(root, "URL", pool->rpc_url, false);
 		root = api_add_string(root, "Algorithm", pool->algorithm.name, false);
 		root = api_add_string(root, "Description", pool->description, false);
