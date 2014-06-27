@@ -16,7 +16,7 @@ echo ' util.c copied \r\n'
 echo 'Autogen from Git ...\r\n'
 ./autogen.sh
 echo 'Configuring sgminer 4.2.1 GSD 1.4 ....\r\n'
-./configure --enable-gridseed
+CFLAGS="-O2 -Wall -march=native" ./configure --enable-gridseed
 echo 'Making sgminer 4.2.1 GSD 1.4 ....\r\n'
 make
 if test -f sgminer
