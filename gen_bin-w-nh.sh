@@ -5,13 +5,13 @@ echo 'Cleanup directory ....\r\n'
 make clean
 echo 'Fetch last commit ...\r\n'
 git pull
-echo 'Switch version without nicehash extranonce patch ...\r\n'
+echo 'Switch version with nicehash extranonce patch ...\r\n'
 echo 'Copying file ... \r\n'
-cp version/miner-wo-nh.h miner.h
+cp version/miner-w-nh.h miner.h
 echo 'miner.h copied \r\n'
-cp version/sgminer-wo-nh.c sgminer.c
+cp version/sgminer-w-nh.c sgminer.c
 echo 'sgminer.c copied \r\n'
-cp version/util-wo-nh.c util.c
+cp version/util-w-nh.c util.c
 echo ' util.c copied \r\n'
 echo 'Autogen from Git ...\r\n'
 ./autogen.sh
